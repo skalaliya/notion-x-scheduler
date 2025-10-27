@@ -58,10 +58,10 @@ graph LR
 
 **📡 Smart Feed Aggregation**
 - OpenAI Blog
-- HuggingFace Blog  
-- Meta AI Research
+- Google AI Blog
+- DeepMind Blog  
 - NVIDIA Developer Blog
-- Anthropic News
+- AWS Machine Learning
 - TechCrunch AI
 - VentureBeat AI
 

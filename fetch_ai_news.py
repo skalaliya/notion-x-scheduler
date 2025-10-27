@@ -35,10 +35,10 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 RSS_FEEDS = [
     "https://openai.com/blog/rss.xml",
-    "https://huggingface.co/blog/rss.xml",
-    "https://ai.facebook.com/blog/rss/",
+    "https://blog.google/technology/ai/rss/",  # Google AI Blog
+    "https://www.deepmind.com/blog/rss.xml",  # DeepMind
     "https://developer.nvidia.com/blog/feed/",
-    "https://www.anthropic.com/news/rss",
+    "https://aws.amazon.com/blogs/machine-learning/feed/",  # AWS ML Blog
     "https://techcrunch.com/tag/artificial-intelligence/feed/",
     "https://venturebeat.com/category/ai/feed/",
 ]
@@ -211,6 +211,7 @@ def summarize_with_openai(title: str, link: str, domain: str) -> str:
     if not OPENAI_AVAILABLE or not OPENAI_API_KEY:
         raise RuntimeError("OpenAI not available")
     
+    # Initialize client - let OpenAI SDK handle environment
     client = OpenAI(api_key=OPENAI_API_KEY)
     sys_msg = (
         "You produce one-line, factual, neutral summaries (≤220 characters). "
