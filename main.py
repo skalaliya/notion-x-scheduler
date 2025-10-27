@@ -21,8 +21,12 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 # ----- Clients -----
 notion = Client(auth=NOTION_TOKEN)
 
-auth = tweepy.OAuth1UserHandler(API_KEY, API_KEY_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
-twitter = tweepy.API(auth)
+twitter = tweepy.Client(
+    consumer_key=API_KEY,
+    consumer_secret=API_KEY_SECRET,
+    access_token=ACCESS_TOKEN,
+    access_token_secret=ACCESS_TOKEN_SECRET
+)
 
 # ----- Helpers -----
 def iso(dt_obj: dt.datetime) -> str:
@@ -82,12 +86,11 @@ def update_failure(page_id: str, error_msg: str):
 
 def post_single_tweet(text: str, media_urls: List[str]) -> str:
     """
-    Uses Twitter v1.1 via Tweepy API.update_status for reliability with OAuth1.
-    If you want to upload images via URLs, you'd need to download then upload.
-    This skeleton only posts text (safe default).
+    Uses Twitter v2 API via Tweepy Client.create_tweet.
+    Note: Media upload still requires v1.1 API if needed.
     """
-    status = twitter.update_status(status=text)
-    return str(status.id)
+    response = twitter.create_tweet(text=text)
+    return str(response.data['id'])
 
 def run():
     if not all([NOTION_TOKEN, NOTION_DB_ID, API_KEY, API_KEY_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET]):
@@ -124,8 +127,11 @@ def run():
             try:
                 # Basic: single text tweet. If thread position > 1, reply.
                 if reply_to_id:
-                    status = twitter.update_status(status=text, in_reply_to_status_id=reply_to_id, auto_populate_reply_metadata=True)
-                    tweet_id = str(status.id)
+                    response = twitter.create_tweet(
+                        text=text, 
+                        in_reply_to_tweet_id=reply_to_id
+                    )
+                    tweet_id = str(response.data['id'])
                 else:
                     tweet_id = post_single_tweet(text, media_urls)
 
