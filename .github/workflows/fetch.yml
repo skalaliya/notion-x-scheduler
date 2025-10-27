@@ -1,0 +1,45 @@
+name: AI Content Fetcher
+
+on:
+  schedule:
+    - cron: "5 7 * * *"  # Daily at 07:05 UTC (≈ 08:05 Paris)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run in dry-run mode (no Notion writes)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ai-content-fetcher
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Run AI Content Fetcher
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python fetch_ai_news.py --dry-run
+          else
+            python fetch_ai_news.py
+          fi
