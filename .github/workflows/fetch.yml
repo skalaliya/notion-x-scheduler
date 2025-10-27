@@ -1,12 +1,15 @@
 name: AI Content Fetcher
 
 on:
+  # Europe/Paris ≈ UTC+2 (Mar–Oct) and UTC+1 (Nov–Feb).
+  # Run at ~10:05 Paris local using two UTC crons.
   schedule:
-    - cron: "5 7 * * *"  # Daily at 07:05 UTC (≈ 08:05 Paris)
+    - cron: "5 8 * 3-10 *"  # 08:05 UTC ≈ 10:05 Paris during CEST (Mar–Oct)
+    - cron: "5 9 * 11-2 *"  # 09:05 UTC ≈ 10:05 Paris during CET (Nov–Feb)
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Run in dry-run mode (no Notion writes)"
+        description: "Only print; do not write to Notion"
         type: boolean
         default: false
 
