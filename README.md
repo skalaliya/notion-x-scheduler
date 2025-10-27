@@ -27,8 +27,8 @@ This repo fetches trusted AI RSS feeds, scores what matters, summarizes the best
 ```mermaid
 graph TD
     A[AI RSS Feeds] --> B[fetch_ai_news.py]
-    B -->|Summarize (OpenAI gpt-4o-mini)| C[Notion DB]
-    C -->|Status=Scheduled & Time<=now| D[X Poster (GitHub Actions)]
+    B -->|Summarize with gpt-4o-mini| C[Notion DB]
+    C -->|Status=Scheduled & Time ready| D[X Poster]
     D -->|X API| E[Tweet Published 🚀]
 ```
 
