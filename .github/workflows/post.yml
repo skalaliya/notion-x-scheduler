@@ -1,26 +1,49 @@
-name: Notion → X (Twitter) Scheduler
+name: X Poster
 
 on:
   schedule:
-    # Runs daily at 07:05 UTC ≈ 08:05 Paris (CET/CEST handled by using UTC)
-    - cron: "05 07 * * *"
-  workflow_dispatch: {}
+    - cron: "0 * * * *"  # hourly backup
+  workflow_run:
+    workflows: ["AI Content Fetcher"]  # run right after fetcher
+    types: [completed]
+
+concurrency:
+  group: x-poster
+  cancel-in-progress: true
 
 jobs:
   post:
     runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'schedule'
+      || (github.event_name == 'workflow_run'
+          && github.event.workflow_run.conclusion == 'success')
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - name: Run scheduler
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pre-check Notion for ready posts
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
-          API_KEY: ${{ secrets.API_KEY }}
-          API_KEY_SECRET: ${{ secrets.API_KEY_SECRET }}
+        run: python check_ready_to_post.py || { echo "No Scheduled rows ready. Skipping."; exit 0; }
+
+      - name: Run Poster
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
           ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
           ACCESS_TOKEN_SECRET: ${{ secrets.ACCESS_TOKEN_SECRET }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_KEY_SECRET: ${{ secrets.API_KEY_SECRET }}
         run: python main.py
