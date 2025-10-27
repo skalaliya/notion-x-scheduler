@@ -7,6 +7,7 @@ and creates a Notion row with Status=Scheduled for automated posting.
 
 import os
 import sys
+import json
 import logging
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,7 @@ except ImportError:
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DB_ID = os.getenv("NOTION_DB_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 RSS_FEEDS = [
     "https://openai.com/blog/rss.xml",
@@ -49,6 +51,7 @@ BOOST_KEYWORDS = [
 MAX_ARTICLE_AGE_HOURS = 48
 RECENCY_BOOST_HOURS = 24
 MAX_TWEET_LENGTH = 220
+SUMMARY_MAX_CHARS = 220
 
 # ----- Logging -----
 logging.basicConfig(
@@ -176,13 +179,15 @@ def score_items(items: List[NewsItem]) -> List[NewsItem]:
         
         score = 0.0
         
-        # Recency boost: +10 points if within last 24h
-        if item.published >= recent_boost_cutoff:
-            score += 10.0
-        
-        # Age penalty: newer = higher score
-        age_hours = (now - item.published).total_seconds() / 3600
-        score += max(0, (MAX_ARTICLE_AGE_HOURS - age_hours) / MAX_ARTICLE_AGE_HOURS * 5.0)
+        # Recency boost with smooth decay
+        if item.published:
+            age_h = (now - item.published).total_seconds() / 3600
+            if 0 <= age_h <= 24:
+                score += 10
+            elif age_h <= 48:
+                score += max(0, 6 - age_h / 8.0)  # smooth decay 24–48h
+            else:
+                score -= 100
         
         # Keyword matching: +2 per keyword in title
         title_upper = item.title.upper()
@@ -201,44 +206,39 @@ def score_items(items: List[NewsItem]) -> List[NewsItem]:
 
 
 # ----- Summarization -----
-def summarize_with_openai(item: NewsItem) -> str:
-    """Use OpenAI Chat Completions to generate a concise summary ≤220 chars."""
+def summarize_with_openai(title: str, link: str, domain: str) -> str:
+    """Use OpenAI Chat Completions API v1 to generate a concise summary ≤220 chars."""
     if not OPENAI_AVAILABLE or not OPENAI_API_KEY:
         raise RuntimeError("OpenAI not available")
     
     client = OpenAI(api_key=OPENAI_API_KEY)
-    
-    prompt = f"""Summarize this AI news article in ≤220 characters. Be factual and concise. No hashtags, emojis, quotes, or mentions. End with the domain in parentheses.
-
-Title: {item.title}
-Link: {item.link}
-Source: {item.source_domain}
-
-Summary:"""
+    sys_msg = (
+        "You produce one-line, factual, neutral summaries (≤220 characters). "
+        "No hashtags, emojis, quotes, @mentions, or markdown. "
+        "End with '(domain)'."
+    )
+    user_msg = json.dumps({"title": title, "link": link, "domain": domain}, ensure_ascii=False)
     
     try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
             messages=[
-                {"role": "system", "content": "You are a concise AI news summarizer. Create factual summaries under 220 characters."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": sys_msg},
+                {"role": "user", "content": user_msg},
             ],
-            max_tokens=100,
-            temperature=0.7
+            temperature=0.2,
+            max_tokens=120,
         )
+        text = (resp.choices[0].message.content or "").strip().replace("\n", " ")
         
-        summary = response.choices[0].message.content.strip()
-        
-        # Ensure it ends with domain
-        if not summary.endswith(f"({item.source_domain})"):
-            if len(summary) + len(item.source_domain) + 3 <= MAX_TWEET_LENGTH:
-                summary = f"{summary} ({item.source_domain})"
-        
-        # Truncate if needed
-        if len(summary) > MAX_TWEET_LENGTH:
-            summary = summary[:MAX_TWEET_LENGTH - 3 - len(item.source_domain) - 2] + f"... ({item.source_domain})"
-        
-        return summary
+        # Hard cap + suffix enforcement
+        if len(text) > SUMMARY_MAX_CHARS:
+            text = text[: SUMMARY_MAX_CHARS - 1] + "…"
+        if not text.endswith(f"({domain})"):
+            suffix = f" ({domain})"
+            base = text[: max(0, SUMMARY_MAX_CHARS - len(suffix))].rstrip(" .,-–—")
+            text = base + suffix
+        return text
     
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
@@ -292,18 +292,62 @@ def summarize_fallback(item: NewsItem) -> str:
 
 def summarize_item(item: NewsItem) -> str:
     """Generate summary using OpenAI if available, otherwise fallback."""
-    try:
-        if OPENAI_AVAILABLE and OPENAI_API_KEY:
+    domain = item.source_domain or "news"
+    title = item.title.strip()
+    link = item.link.strip()
+    
+    if OPENAI_API_KEY:
+        try:
             logger.info("Using OpenAI for summarization")
-            return summarize_with_openai(item)
-    except Exception as e:
-        logger.warning(f"OpenAI summarization failed, using fallback: {e}")
+            return summarize_with_openai(title, link, domain)
+        except Exception as e:
+            logger.warning(f"OpenAI summarization failed, using fallback: {e}")
     
     logger.info("Using fallback summarization")
     return summarize_fallback(item)
 
 
 # ----- Notion Integration -----
+def notion_client() -> Client:
+    """Create a Notion client instance."""
+    if not NOTION_TOKEN:
+        raise RuntimeError("NOTION_TOKEN must be set")
+    return Client(auth=NOTION_TOKEN)
+
+
+def notion_create_row(notion: Client, db_id: str, *, tweet: str,
+                      scheduled_time: datetime, media_url: Optional[str] = None,
+                      status: str = "Scheduled", error: Optional[str] = None):
+    """Create a row in the Notion database."""
+    properties = {
+        "Tweet Content": {"title": [{"type": "text", "text": {"content": tweet}}]},
+        "Scheduled Time": {"date": {"start": scheduled_time.replace(microsecond=0).isoformat().replace('+00:00', 'Z')}},
+        "Status": {"select": {"name": status}},
+    }
+    if media_url:
+        properties["Media URLs"] = {"rich_text": [{"type": "text", "text": {"content": media_url}}]}
+    if error:
+        properties["Error Message"] = {"rich_text": [{"type": "text", "text": {"content": error[:1800]}}]}
+    
+    return notion.pages.create(parent={"database_id": db_id}, properties=properties)
+
+
+def write_skipped_row():
+    """Write a Skipped row to Notion when no fresh items are found."""
+    try:
+        notion = notion_client()
+        db_id = os.environ["NOTION_DB_ID"]
+        notion_create_row(
+            notion, db_id,
+            tweet="(No fresh AI news today.) (system)",
+            scheduled_time=datetime.now(timezone.utc) - timedelta(minutes=5),
+            status="Skipped",
+        )
+        logger.info("Wrote Skipped row to Notion.")
+    except Exception as e:
+        logger.error("Failed to write Skipped row: %s", e)
+
+
 def create_notion_entry(summary: str, item: NewsItem, dry_run: bool = False) -> bool:
     """Create a Notion database entry with Status=Scheduled."""
     if dry_run:
@@ -313,58 +357,30 @@ def create_notion_entry(summary: str, item: NewsItem, dry_run: bool = False) -> 
     if not NOTION_TOKEN or not NOTION_DB_ID:
         raise RuntimeError("NOTION_TOKEN and NOTION_DB_ID must be set")
     
-    notion = Client(auth=NOTION_TOKEN)
-    
-    # Scheduled time: now - 5 minutes (ready for immediate posting)
     scheduled_time = datetime.now(timezone.utc) - timedelta(minutes=5)
-    scheduled_iso = scheduled_time.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-    
-    properties = {
-        "Tweet Content": {
-            "title": [{"text": {"content": summary}}]
-        },
-        "Scheduled Time": {
-            "date": {"start": scheduled_iso}
-        },
-        "Status": {
-            "select": {"name": "Scheduled"}
-        }
-    }
-    
-    # Add media URL if available
-    if item.image_url:
-        properties["Media URLs"] = {
-            "rich_text": [{"text": {"content": item.image_url}}]
-        }
     
     try:
-        page = notion.pages.create(
-            parent={"database_id": NOTION_DB_ID},
-            properties=properties
+        notion = notion_client()
+        notion_create_row(
+            notion, NOTION_DB_ID,
+            tweet=summary,
+            scheduled_time=scheduled_time,
+            media_url=item.image_url,
+            status="Scheduled",
         )
-        logger.info(f"Created Notion entry: {page['id']}")
+        logger.info(f"Created Notion entry for: {item.title[:50]}...")
         return True
     except Exception as e:
         logger.error(f"Failed to create Notion entry: {e}")
         # Try to create error entry
         try:
-            error_properties = {
-                "Tweet Content": {
-                    "title": [{"text": {"content": f"[ERROR] Failed to create entry for: {item.title[:100]}"}}]
-                },
-                "Status": {
-                    "select": {"name": "Failed"}
-                },
-                "Error Message": {
-                    "rich_text": [{"text": {"content": str(e)[:1800]}}]
-                },
-                "Scheduled Time": {
-                    "date": {"start": scheduled_iso}
-                }
-            }
-            notion.pages.create(
-                parent={"database_id": NOTION_DB_ID},
-                properties=error_properties
+            notion = notion_client()
+            notion_create_row(
+                notion, NOTION_DB_ID,
+                tweet=f"[ERROR] Failed to create entry for: {item.title[:100]}",
+                scheduled_time=scheduled_time,
+                status="Failed",
+                error=str(e),
             )
             logger.info("Created error entry in Notion")
         except Exception as e2:
@@ -394,7 +410,12 @@ def main():
         
         if not scored_items:
             logger.warning(f"No items within last {MAX_ARTICLE_AGE_HOURS}h")
-            return
+            if args.dry_run:
+                print("No fresh items (≤48h); Skipped.")
+                return 0
+            write_skipped_row()
+            print("No fresh items (≤48h); Skipped.")
+            return 0
         
         # 3. Pick top item
         top_item = scored_items[0]
@@ -407,7 +428,20 @@ def main():
         summary = summarize_item(top_item)
         logger.info(f"Generated summary ({len(summary)} chars): {summary}")
         
-        # 5. Create Notion entry
+        # 5. Dry-run output
+        if args.dry_run:
+            print(json.dumps({
+                "summary": summary,
+                "title": top_item.title,
+                "link": top_item.link,
+                "published": top_item.published.isoformat() if top_item.published else None,
+                "image_url": top_item.image_url,
+                "domain": top_item.source_domain,
+                "note": "dry-run: Notion write skipped"
+            }, ensure_ascii=False, indent=2))
+            return 0
+        
+        # 6. Create Notion entry
         success = create_notion_entry(summary, top_item, dry_run=args.dry_run)
         
         if success:

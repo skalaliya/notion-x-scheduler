@@ -16,6 +16,7 @@ The AI Content Fetcher (`fetch_ai_news.py`) automatically discovers and curates 
 - Selects the top article and summarizes it to ≤220 characters
 - Creates a Notion database entry with `Status=Scheduled` for automatic posting
 - Uses OpenAI API for summarization if `OPENAI_API_KEY` is provided, otherwise uses a heuristic fallback
+- Summaries use OpenAI v1 (`gpt-4o-mini` by default). Override with `OPENAI_MODEL` if needed.
 
 **How to run manually:**
 1. Go to **Actions** → **AI Content Fetcher** in your GitHub repository
