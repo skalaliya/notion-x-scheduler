@@ -2,8 +2,9 @@ name: Notion → X (Twitter) Scheduler
 
 on:
   schedule:
-    - cron: "0 * * * *"   # every hour (UTC)
-  workflow_dispatch:       # allow manual run
+    # Runs daily at 07:05 UTC ≈ 08:05 Paris (CET/CEST handled by using UTC)
+    - cron: "05 07 * * *"
+  workflow_dispatch: {}
 
 jobs:
   post:
