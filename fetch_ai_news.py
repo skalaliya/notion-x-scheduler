@@ -10,9 +10,12 @@ import sys
 import json
 import logging
 import argparse
+import time
+import hashlib
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set, Tuple
 from urllib.parse import urlparse
+from collections import Counter
 
 import feedparser
 import tldextract
@@ -85,90 +88,202 @@ class NewsItem:
 
 
 # ----- RSS Parsing -----
+def get_recent_notion_content(notion: Client, db_id: str, days: int = 7) -> Set[Tuple[str, str]]:
+    """
+    Query Notion for recent Posted/Scheduled/Failed entries to prevent duplicates.
+    Returns set of (normalized_title, link) tuples.
+    """
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_iso = cutoff.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+        
+        # Query for entries from last N days
+        results = notion.databases.query(
+            database_id=db_id,
+            filter={
+                "or": [
+                    {"property": "Status", "select": {"equals": "Posted"}},
+                    {"property": "Status", "select": {"equals": "Scheduled"}},
+                    {"property": "Status", "select": {"equals": "Failed"}},
+                ],
+                "and": [
+                    {"property": "Scheduled Time", "date": {"after": cutoff_iso}}
+                ]
+            },
+            page_size=100
+        )
+        
+        seen_content = set()
+        for page in results.get("results", []):
+            # Extract title from Tweet Content property
+            title_prop = page["properties"].get("Tweet Content", {})
+            title_blocks = title_prop.get("title", [])
+            if title_blocks:
+                content = "".join(b.get("plain_text", "") for b in title_blocks)
+                # Normalize: lowercase, strip, remove extra spaces
+                normalized = " ".join(content.lower().strip().split())
+                if normalized and not normalized.startswith("[error]"):
+                    seen_content.add((normalized, ""))  # We only have content, not original link
+        
+        logger.info(f"Found {len(seen_content)} recent entries in Notion (last {days} days)")
+        return seen_content
+    
+    except Exception as e:
+        logger.warning(f"Failed to query recent Notion content: {e}")
+        return set()
+
+
+def normalize_title(title: str) -> str:
+    """Normalize title for comparison."""
+    return " ".join(title.lower().strip().split())
+
+
+def title_similarity(title1: str, title2: str) -> float:
+    """Calculate simple word overlap similarity between titles."""
+    words1 = set(normalize_title(title1).split())
+    words2 = set(normalize_title(title2).split())
+    
+    if not words1 or not words2:
+        return 0.0
+    
+    intersection = words1 & words2
+    union = words1 | words2
+    
+    return len(intersection) / len(union) if union else 0.0
+
+
 def parse_feeds() -> List[NewsItem]:
-    """Fetch and parse all RSS feeds, returning normalized NewsItem objects."""
+    """
+    Fetch and parse all RSS feeds, returning normalized NewsItem objects.
+    Enhanced with:
+    - Notion duplicate checking
+    - Exponential backoff retries
+    - Better deduplication
+    """
     items = []
-    seen = set()  # dedupe by (link, title)
+    seen = set()  # dedupe by (link, normalized_title)
+    
+    # Get recent Notion content to prevent duplicates
+    notion_seen = set()
+    if NOTION_TOKEN and NOTION_DB_ID:
+        try:
+            notion = Client(auth=NOTION_TOKEN)
+            notion_seen = get_recent_notion_content(notion, NOTION_DB_ID, days=7)
+        except Exception as e:
+            logger.warning(f"Could not fetch Notion history: {e}")
     
     for feed_url in RSS_FEEDS:
-        try:
-            logger.info(f"Fetching feed: {feed_url}")
-            response = requests.get(feed_url, timeout=15)
-            response.raise_for_status()
-            feed = feedparser.parse(response.content)
-            
-            if feed.bozo and not feed.entries:
-                logger.warning(f"Feed parsing issue for {feed_url}: {feed.bozo_exception}")
-                continue
-            
-            for entry in feed.entries:
-                title = entry.get("title", "").strip()
-                link = entry.get("link", "").strip()
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Fetching feed: {feed_url} (attempt {attempt + 1}/{max_retries})")
+                response = requests.get(feed_url, timeout=15)
+                response.raise_for_status()
+                feed = feedparser.parse(response.content)
                 
-                if not title or not link:
-                    continue
+                if feed.bozo and not feed.entries:
+                    logger.warning(f"Feed parsing issue for {feed_url}: {feed.bozo_exception}")
+                    break  # Don't retry on parse errors
                 
-                # Dedupe
-                dedupe_key = (link, title)
-                if dedupe_key in seen:
-                    continue
-                seen.add(dedupe_key)
-                
-                # Parse published date
-                published_str = entry.get("published") or entry.get("updated")
-                if published_str:
-                    try:
-                        published = date_parser.parse(published_str)
-                        # Make timezone-aware if naive
-                        if published.tzinfo is None:
-                            published = published.replace(tzinfo=timezone.utc)
-                    except Exception:
+                for entry in feed.entries:
+                    title = entry.get("title", "").strip()
+                    link = entry.get("link", "").strip()
+                    
+                    if not title or not link:
+                        continue
+                    
+                    # Normalize title for comparison
+                    norm_title = normalize_title(title)
+                    
+                    # Dedupe by link and normalized title
+                    dedupe_key = (link, norm_title)
+                    if dedupe_key in seen:
+                        continue
+                    
+                    # Check against recent Notion content
+                    if any(title_similarity(norm_title, n[0]) > 0.7 for n in notion_seen):
+                        logger.warning(f"Skipping duplicate from Notion history: {title[:60]}...")
+                        continue
+                    
+                    seen.add(dedupe_key)
+                    
+                    # Parse published date
+                    published_str = entry.get("published") or entry.get("updated")
+                    if published_str:
+                        try:
+                            published = date_parser.parse(published_str)
+                            # Make timezone-aware if naive
+                            if published.tzinfo is None:
+                                published = published.replace(tzinfo=timezone.utc)
+                        except Exception:
+                            published = datetime.now(timezone.utc)
+                    else:
                         published = datetime.now(timezone.utc)
+                    
+                    # Extract domain
+                    extracted = tldextract.extract(link)
+                    source_domain = f"{extracted.domain}.{extracted.suffix}" if extracted.domain else "unknown"
+                    
+                    # Image URL (optional)
+                    image_url = None
+                    if "media_content" in entry and entry.media_content:
+                        image_url = entry.media_content[0].get("url")
+                    elif "media_thumbnail" in entry and entry.media_thumbnail:
+                        image_url = entry.media_thumbnail[0].get("url")
+                    elif "enclosures" in entry and entry.enclosures:
+                        for enc in entry.enclosures:
+                            if enc.get("type", "").startswith("image"):
+                                image_url = enc.get("href")
+                                break
+                    
+                    # Summary (for fallback)
+                    summary = entry.get("summary", "")
+                    
+                    items.append(NewsItem(
+                        title=title,
+                        link=link,
+                        published=published,
+                        source_domain=source_domain,
+                        image_url=image_url,
+                        summary=summary
+                    ))
+                
+                # Success - break retry loop
+                break
+                
+            except requests.RequestException as e:
+                logger.warning(f"Request error for {feed_url} (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    sleep_time = 5 * (2 ** attempt)  # Exponential backoff: 5s, 10s, 20s
+                    logger.info(f"Retrying in {sleep_time}s...")
+                    time.sleep(sleep_time)
                 else:
-                    published = datetime.now(timezone.utc)
-                
-                # Extract domain
-                extracted = tldextract.extract(link)
-                source_domain = f"{extracted.domain}.{extracted.suffix}" if extracted.domain else "unknown"
-                
-                # Image URL (optional)
-                image_url = None
-                if "media_content" in entry and entry.media_content:
-                    image_url = entry.media_content[0].get("url")
-                elif "media_thumbnail" in entry and entry.media_thumbnail:
-                    image_url = entry.media_thumbnail[0].get("url")
-                elif "enclosures" in entry and entry.enclosures:
-                    for enc in entry.enclosures:
-                        if enc.get("type", "").startswith("image"):
-                            image_url = enc.get("href")
-                            break
-                
-                # Summary (for fallback)
-                summary = entry.get("summary", "")
-                
-                items.append(NewsItem(
-                    title=title,
-                    link=link,
-                    published=published,
-                    source_domain=source_domain,
-                    image_url=image_url,
-                    summary=summary
-                ))
-        
-        except Exception as e:
-            logger.error(f"Error fetching feed {feed_url}: {e}")
-            continue
+                    logger.error(f"Failed to fetch {feed_url} after {max_retries} attempts")
+            except Exception as e:
+                logger.error(f"Unexpected error fetching feed {feed_url}: {e}")
+                break  # Don't retry on unexpected errors
     
     logger.info(f"Parsed {len(items)} unique items from {len(RSS_FEEDS)} feeds")
     return items
 
 
 # ----- Scoring -----
-def score_items(items: List[NewsItem]) -> List[NewsItem]:
-    """Score items based on recency and keyword matches. Filter out items older than 48h."""
+def score_items(items: List[NewsItem], notion_recent: Optional[Set[Tuple[str, str]]] = None) -> List[NewsItem]:
+    """
+    Score items based on recency, keyword matches, and source diversity.
+    Enhanced with:
+    - Source diversity penalties (prevent over-representation)
+    - Stricter recency boost (<24h heavily favored)
+    - Similarity check against recent Notion content
+    Filter out items older than 48h.
+    """
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=MAX_ARTICLE_AGE_HOURS)
     recent_boost_cutoff = now - timedelta(hours=RECENCY_BOOST_HOURS)
+    
+    # Count source distribution
+    source_counter = Counter(item.source_domain for item in items)
+    total_items = len(items)
     
     filtered_items = []
     
@@ -179,21 +294,48 @@ def score_items(items: List[NewsItem]) -> List[NewsItem]:
         
         score = 0.0
         
-        # Recency boost with smooth decay
+        # Enhanced recency boost with stricter penalties
         if item.published:
             age_h = (now - item.published).total_seconds() / 3600
-            if 0 <= age_h <= 24:
-                score += 10
+            if 0 <= age_h <= 6:
+                score += 15  # Super fresh (< 6h)
+            elif age_h <= 12:
+                score += 12  # Very fresh (6-12h)
+            elif age_h <= 24:
+                score += 8   # Fresh (12-24h)
+            elif age_h <= 36:
+                score += 3   # Recent (24-36h)
             elif age_h <= 48:
-                score += max(0, 6 - age_h / 8.0)  # smooth decay 24–48h
+                score += 1   # Older (36-48h) - minimal boost
             else:
-                score -= 100
+                score -= 100  # Too old
         
         # Keyword matching: +2 per keyword in title
         title_upper = item.title.upper()
         for keyword in BOOST_KEYWORDS:
             if keyword.upper() in title_upper:
                 score += 2.0
+        
+        # Source diversity penalty: penalize over-represented sources
+        source_freq = source_counter[item.source_domain] / total_items
+        if source_freq > 0.5:  # If source has >50% of items
+            penalty = (source_freq - 0.5) * 10  # Penalty scales with over-representation
+            score -= penalty
+            logger.debug(f"Applied diversity penalty -{penalty:.2f} to {item.source_domain}")
+        elif source_freq > 0.3:  # Moderate over-representation
+            penalty = (source_freq - 0.3) * 5
+            score -= penalty
+        
+        # Check similarity with recent Notion content if provided
+        if notion_recent:
+            norm_title = normalize_title(item.title)
+            for notion_title, _ in notion_recent:
+                similarity = title_similarity(norm_title, notion_title)
+                if similarity > 0.6:  # High similarity threshold
+                    penalty = (similarity - 0.6) * 15  # Strong penalty for similar content
+                    score -= penalty
+                    logger.debug(f"Applied similarity penalty -{penalty:.2f} for '{item.title[:40]}...'")
+                    break
         
         item.score = score
         filtered_items.append(item)
@@ -202,6 +344,14 @@ def score_items(items: List[NewsItem]) -> List[NewsItem]:
     filtered_items.sort(key=lambda x: x.score, reverse=True)
     
     logger.info(f"Scored and filtered to {len(filtered_items)} items (within {MAX_ARTICLE_AGE_HOURS}h)")
+    
+    # Log top 5 for debugging
+    if filtered_items:
+        logger.info("Top 5 scored items:")
+        for i, item in enumerate(filtered_items[:5], 1):
+            age_h = (now - item.published).total_seconds() / 3600
+            logger.info(f"  {i}. [{item.score:.2f}] {item.title[:60]}... ({item.source_domain}, {age_h:.1f}h old)")
+    
     return filtered_items
 
 
@@ -399,15 +549,26 @@ def main():
     logger.info(f"Dry run mode: {args.dry_run}")
     
     try:
-        # 1. Parse feeds
+        # 1. Parse feeds (with Notion duplicate checking)
         items = parse_feeds()
         
         if not items:
             logger.warning("No items found in any feed")
-            return
+            if not args.dry_run:
+                write_skipped_row()
+            return 0
         
-        # 2. Score and filter
-        scored_items = score_items(items)
+        # Get recent Notion content for scoring
+        notion_recent = set()
+        if NOTION_TOKEN and NOTION_DB_ID:
+            try:
+                notion = notion_client()
+                notion_recent = get_recent_notion_content(notion, NOTION_DB_ID, days=7)
+            except Exception as e:
+                logger.warning(f"Could not fetch Notion history for scoring: {e}")
+        
+        # 2. Score and filter with enhanced diversity and freshness checks
+        scored_items = score_items(items, notion_recent=notion_recent)
         
         if not scored_items:
             logger.warning(f"No items within last {MAX_ARTICLE_AGE_HOURS}h")
