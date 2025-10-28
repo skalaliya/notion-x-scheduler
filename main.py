@@ -1,11 +1,14 @@
-import os, time, logging, datetime as dt
+import os
+import time
+import logging
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 import tweepy
 from notion_client import Client
 
 # ----- Config -----
-UTC_NOW = dt.datetime.utcnow()
+UTC_NOW = datetime.now(timezone.utc)
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DB_ID = os.getenv("NOTION_DB_ID")
@@ -16,7 +19,12 @@ ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 
 # ----- Logging -----
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger(__name__)
 
 # ----- Clients -----
 notion = Client(auth=NOTION_TOKEN)
@@ -29,7 +37,7 @@ twitter = tweepy.Client(
 )
 
 # ----- Helpers -----
-def iso(dt_obj: dt.datetime) -> str:
+def iso(dt_obj: datetime) -> str:
     return dt_obj.replace(microsecond=0).isoformat() + "Z"
 
 def notion_query_scheduled(db_id: str) -> List[Dict[str, Any]]:
@@ -98,10 +106,10 @@ def run():
 
     pages = notion_query_scheduled(NOTION_DB_ID)
     if not pages:
-        logging.info("No scheduled posts due.")
+        logger.info("No scheduled posts due.")
         return
 
-    logging.info(f"Found {len(pages)} post(s) due.")
+    logger.info(f"Found {len(pages)} post(s) due.")
 
     # Group by Thread Group ID (if present)
     groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -137,12 +145,12 @@ def run():
 
                 update_success(page_id, tweet_id)
                 reply_to_id = tweet_id
-                logging.info(f"Posted [{gid}] -> {tweet_id}")
+                logger.info(f"Posted [{gid}] -> {tweet_id}")
 
                 # polite pacing to avoid hitting minor limits
                 time.sleep(2)
             except Exception as e:
-                logging.exception("Posting failed")
+                logger.exception("Posting failed")
                 update_failure(page_id, str(e))
 
 if __name__ == "__main__":
