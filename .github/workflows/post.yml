@@ -1,8 +1,10 @@
 name: X Poster
 
 on:
+  # Run once daily, ~5 minutes after fetcher (allows time for Notion write)
   schedule:
-    - cron: "0 * * * *"  # hourly backup
+    - cron: "10 8 * 3-10 *"     # 08:10 UTC ≈ 10:10 Paris during CEST (Mar–Oct)
+    - cron: "10 9 * 11,12,1,2 *" # 09:10 UTC ≈ 10:10 Paris during CET (Nov–Feb)
   workflow_run:
     workflows: ["AI Content Fetcher"]  # run right after fetcher
     types: [completed]
