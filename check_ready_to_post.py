@@ -1,10 +1,12 @@
-import os, sys, datetime
+import os
+import sys
+from datetime import datetime, timezone
 from notion_client import Client
 
 def has_ready_posts():
     notion = Client(auth=os.environ["NOTION_TOKEN"])
     db_id = os.environ["NOTION_DB_ID"]
-    now = datetime.datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     query = notion.databases.query(
         database_id=db_id,
