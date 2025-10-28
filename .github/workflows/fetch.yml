@@ -5,7 +5,7 @@ on:
   # Run at ~10:05 Paris local using two UTC crons.
   schedule:
     - cron: "5 8 * 3-10 *"  # 08:05 UTC ≈ 10:05 Paris during CEST (Mar–Oct)
-    - cron: "5 9 * 11-2 *"  # 09:05 UTC ≈ 10:05 Paris during CET (Nov–Feb)
+    - cron: "5 9 * 11,12,1,2 *"  # 09:05 UTC ≈ 10:05 Paris during CET (Nov–Feb)
   workflow_dispatch:
     inputs:
       dry_run:
