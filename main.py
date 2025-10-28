@@ -38,7 +38,10 @@ twitter = tweepy.Client(
 
 # ----- Helpers -----
 def iso(dt_obj: datetime) -> str:
-    return dt_obj.replace(microsecond=0).isoformat() + "Z"
+    """Convert datetime to ISO 8601 string with 'Z' suffix (UTC)."""
+    # Remove microseconds and convert to UTC ISO format
+    # Replace +00:00 with Z for Notion API compatibility
+    return dt_obj.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 def notion_query_scheduled(db_id: str) -> List[Dict[str, Any]]:
     """
