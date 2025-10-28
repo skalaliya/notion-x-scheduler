@@ -152,8 +152,18 @@ def run():
 
                 # polite pacing to avoid hitting minor limits
                 time.sleep(2)
+            except tweepy.errors.Forbidden as e:
+                error_msg = str(e)
+                if "duplicate content" in error_msg.lower():
+                    logger.warning(f"Duplicate content detected for page {page_id[:8]}... - marking as Failed")
+                else:
+                    logger.error(f"Twitter API forbidden error: {error_msg}")
+                update_failure(page_id, error_msg)
+            except tweepy.errors.TweepyException as e:
+                logger.error(f"Twitter API error: {e}")
+                update_failure(page_id, str(e))
             except Exception as e:
-                logger.exception("Posting failed")
+                logger.exception("Unexpected error during posting")
                 update_failure(page_id, str(e))
 
 if __name__ == "__main__":
