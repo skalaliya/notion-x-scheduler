@@ -16,11 +16,11 @@
 
 ## Overview
 
-This repo automatically curates and posts AI news to X (Twitter) using a smart two-stage pipeline:
+This repo automatically curates and posts AI news to X (Twitter) using an efficient two-stage pipeline:
 
-1. **Fetcher** runs daily at ~10:05 AM Europe/Paris time (DST-aware), parses 7 trusted AI RSS feeds, scores articles by relevance and recency, summarizes the top pick with OpenAI's `gpt-4o-mini`, and queues it in your Notion database with `Status=Scheduled`.
+1. **Fetcher** runs once daily at ~10:05 AM Europe/Paris time (DST-aware), parses 7 trusted AI RSS feeds, scores articles by relevance and recency, summarizes the top pick with OpenAI's `gpt-4o-mini`, and queues it in your Notion database with `Status=Scheduled`.
 
-2. **Poster** triggers immediately after a successful fetch (plus hourly backup), checks Notion for ready posts (`Scheduled Time <= now`), and publishes them to X with proper thread support.
+2. **Poster** runs at ~10:10 AM (5 minutes after fetcher) to publish queued content. Also triggers immediately when fetcher completes successfully via event-chaining for zero-delay posting.
 
 **Built and maintained by:** @skalaliya
 
@@ -43,11 +43,12 @@ graph TD
 * 📰 **Multi-source AI feeds** (OpenAI, Google AI, DeepMind, NVIDIA, AWS ML, TechCrunch, VentureBeat)
 * 🧠 **Smart summarization** with `gpt-4o-mini` (cost-effective, high-quality) — graceful fallback to heuristics
 * 🗂️ **Notion as content queue** (`Status=Scheduled` + `Scheduled Time` properties)
-* ⏰ **DST-aware scheduling**: Runs at ~10:05 AM Paris time year-round (dual UTC crons)
-* 🔁 **Event-chained workflows**: Poster auto-triggers after successful fetch (hourly backup)
-* 🛡️ **Pre-check validation**: Skips poster run if no ready posts exist
-* � **Dry-run mode**: Test with `--dry-run` flag or workflow dispatch for JSON output
+* ⏰ **DST-aware scheduling**: Runs once daily at ~10:05 AM Paris time year-round (dual UTC crons)
+* 🔁 **Event-chained workflows**: Poster auto-triggers after successful fetch for instant publishing
+* 🛡️ **Pre-check validation**: Skips poster run if no ready posts exist (saves compute minutes)
+* 🧪 **Dry-run mode**: Test with `--dry-run` flag or workflow dispatch for JSON output
 * 🎯 **Relevance scoring**: Keyword matching + recency decay (48h window)
+* 💰 **Compute-optimized**: ~45 minutes/month usage (2% of GitHub free tier)
 
 ---
 
@@ -84,7 +85,7 @@ Expected output: JSON with top article details or "No fresh items (≤48h); Skip
 
 **Option B: Automatic schedule**
 * Fetcher runs daily at ~10:05 AM Europe/Paris time
-* Poster triggers automatically after successful fetch
+* Poster runs at ~10:10 AM (5 min buffer) or immediately after fetch completes
 
 ### 4. Monitor Execution
 
@@ -96,14 +97,19 @@ Expected output: JSON with top article details or "No fresh items (≤48h); Skip
 
 ## How It Works
 
-### Scheduling (DST-Aware)
+### Scheduling (DST-Aware & Compute-Optimized)
 
-The fetcher uses **dual UTC cron schedules** to maintain consistent Paris local time:
+Both workflows use **dual UTC cron schedules** to maintain consistent Paris local time while minimizing compute usage:
 
+**Fetcher Schedule:**
 * **Mar–Oct (CEST, UTC+2)**: `5 8 * 3-10 *` → 08:05 UTC = 10:05 Paris
-* **Nov–Feb (CET, UTC+1)**: `5 9 * 11-2 *` → 09:05 UTC = 10:05 Paris
+* **Nov–Feb (CET, UTC+1)**: `5 9 * 11,12,1,2 *` → 09:05 UTC = 10:05 Paris
 
-GitHub Actions only supports UTC cron, so this dual-schedule approach automatically handles daylight saving transitions.
+**Poster Schedule:**
+* **Mar–Oct (CEST, UTC+2)**: `10 8 * 3-10 *` → 08:10 UTC = 10:10 Paris
+* **Nov–Feb (CET, UTC+1)**: `10 9 * 11,12,1,2 *` → 09:10 UTC = 10:10 Paris
+
+The 5-minute gap ensures Notion writes complete before posting. GitHub Actions only supports UTC cron, so this dual-schedule approach automatically handles daylight saving transitions.
 
 ### Workflow Chain
 
@@ -111,31 +117,37 @@ GitHub Actions only supports UTC cron, so this dual-schedule approach automatica
 Daily at 10:05 Paris
        ↓
 [AI Content Fetcher]
-       ↓ (on success)
-[X Poster] ← also runs hourly as backup
+       ↓ (writes to Notion)
+       ↓ (5-min buffer)
+[X Poster at 10:10] ← also triggers immediately on fetch success
        ↓
 [check_ready_to_post.py validates Notion]
        ↓ (if posts ready)
 [main.py publishes to X]
 ```
 
+**Compute Efficiency:** Both workflows run once daily = ~2 runs/day = ~60 min/month (3% of free tier)
+
 ### Files
 
 * **`fetch_ai_news.py`** (445 lines) - RSS parser, scorer, OpenAI integration, Notion writer
 * **`main.py`** - X/Twitter poster with thread support
 * **`check_ready_to_post.py`** - Pre-check validation script
-* **`.github/workflows/fetch.yml`** - Fetcher workflow (Paris timezone scheduling)
-* **`.github/workflows/post.yml`** - Poster workflow (event-chained + hourly backup)
+* **`.github/workflows/fetch.yml`** - Fetcher workflow (daily at 10:05 Paris, DST-aware)
+* **`.github/workflows/post.yml`** - Poster workflow (daily at 10:10 Paris + event-chained)
 
 ---
 
 ## Costs (typical)
 
-| Service              | Monthly | Notes                |
-| -------------------- | ------: | -------------------- |
-| GitHub Actions       |  ~$0.50 | ~60 min runtime      |
-| OpenAI `gpt-4o-mini` |  <$0.01 | ~1 short summary/day |
-| Notion API           |    Free | Included in plan     |
+| Service              | Monthly | Notes                          |
+| -------------------- | ------: | ------------------------------ |
+| GitHub Actions       | **Free** | ~60 min/month (3% of free tier) |
+| OpenAI `gpt-4o-mini` |  <$0.01 | ~1 short summary/day           |
+| Notion API           |    Free | Included in plan               |
+| **Total**            | **<$0.01** | Virtually free to run       |
+
+**Compute optimization:** Running once daily instead of hourly saves ~1,035 minutes/month (95% reduction)!
 
 ---
 
@@ -159,7 +171,7 @@ notion-x-scheduler/
 ├── requirements.txt          # Python dependencies
 ├── .github/workflows/
 │   ├── fetch.yml            # Daily at 10:05 Paris (DST-aware)
-│   └── post.yml             # Event-chained + hourly backup
+│   └── post.yml             # Daily at 10:10 Paris + event-chained
 └── README.md                # This file
 ```
 
