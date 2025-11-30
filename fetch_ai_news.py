@@ -575,7 +575,11 @@ def notion_create_row(notion: Client, db_id: str, *, title: str,
         "Status": {"select": {"name": status}},
     }
     if long_form_content:
-        properties["Long Form Draft"] = {"rich_text": [{"type": "text", "text": {"content": long_form_content}}]}
+        # Split into 2000-char chunks (Notion API limit for rich_text blocks)
+        chunks = []
+        for i in range(0, len(long_form_content), 2000):
+            chunks.append({"type": "text", "text": {"content": long_form_content[i:i+2000]}})
+        properties["Long Form Draft"] = {"rich_text": chunks}
     if media_url:
         properties["Media URLs"] = {"rich_text": [{"type": "text", "text": {"content": media_url}}]}
     if error:
