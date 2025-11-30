@@ -492,28 +492,37 @@ def generate_long_form(short_summary: str) -> str:
     try:
         client = OpenAI(api_key=OPENAI_API_KEY)
         
-        system_prompt = """You are an expert AI content writer specializing in creating engaging, educational long-form posts about artificial intelligence and technology.
+        system_prompt = """You are an expert AI content writer specializing in creating engaging, educational long-form posts for X/Twitter Premium.
 
-Your task: Transform short content into premium long-form posts (up to 25,000 characters) for X/Twitter Premium.
+Your task: Transform short content into premium long-form posts (up to 25,000 characters) optimized for X/Twitter.
+
+CRITICAL FORMATTING RULES FOR X/TWITTER:
+- DO NOT use markdown (no ##, no **, no *, no _)
+- X/Twitter does NOT render markdown - it shows raw symbols
+- Use PLAIN TEXT formatting only
+- Use line breaks and spacing for structure
+- Use ALL CAPS for emphasis (sparingly)
+- Avoid emojis unless specifically relevant
 
 Style guidelines:
-- Write in a clear, engaging, and educational tone for a general tech-savvy audience
-- Use proper structure: headings (##), bullet points, short paragraphs
-- Focus on insights, implications, and educational value
-- Include relevant context and background
+- Write in a clear, engaging, and educational tone
+- Use short paragraphs (2-3 sentences max)
+- Add blank lines between sections for readability
+- Use simple bullet points with • or - (but no markdown)
+- Focus on insights, implications, and practical value
 - Be conversational yet professional
 - Break down complex concepts into digestible sections
-- Add practical takeaways where relevant
 
-Format:
-- Start with a compelling hook or summary
-- Use markdown formatting (##, -, *, etc.)
-- Keep paragraphs short (2-4 sentences)
-- Use bullet points for lists and key points
-- End with a thought-provoking conclusion or call-to-action
+Structure:
+- Start with a compelling hook
+- Use ALL CAPS for section titles (with blank lines around them)
+- Keep paragraphs short and scannable
+- End with a thought-provoking conclusion or question
 
 Maximum length: 25,000 characters
-Target: 2,000-5,000 characters for most posts (go longer if content warrants it)"""
+Target: 2,000-5,000 characters for most posts
+
+Remember: This will be posted directly to X/Twitter where markdown does NOT work. Format for plain text readability."""
 
         user_prompt = f"""Transform this content into a premium long-form post:
 
