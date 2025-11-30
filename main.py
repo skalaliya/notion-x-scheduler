@@ -2,9 +2,10 @@ import os
 import time
 import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
-import tweepy
+import requests
+from requests_oauthlib import OAuth1
 from notion_client import Client
 
 # ----- Config -----
@@ -29,18 +30,19 @@ logger = logging.getLogger(__name__)
 # ----- Clients -----
 notion = Client(auth=NOTION_TOKEN)
 
-twitter = tweepy.Client(
-    consumer_key=API_KEY,
-    consumer_secret=API_KEY_SECRET,
-    access_token=ACCESS_TOKEN,
-    access_token_secret=ACCESS_TOKEN_SECRET
+# OAuth1 for direct X API v2 calls (supports 25k char tweets)
+oauth = OAuth1(
+    API_KEY,
+    client_secret=API_KEY_SECRET,
+    resource_owner_key=ACCESS_TOKEN,
+    resource_owner_secret=ACCESS_TOKEN_SECRET
 )
 
 # ----- Helpers -----
 def iso(dt_obj: datetime) -> str:
     """Convert datetime to ISO 8601 string with 'Z' suffix (UTC)."""
-    # Remove microseconds and convert to UTC ISO format
-    # Replace +00:00 with Z for Notion API compatibility
+    # Convert to UTC explicitly, remove microseconds
+    dt_obj = dt_obj.astimezone(timezone.utc)
     return dt_obj.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 def notion_query_scheduled(db_id: str) -> List[Dict[str, Any]]:
@@ -95,13 +97,40 @@ def update_failure(page_id: str, error_msg: str):
         },
     )
 
-def post_single_tweet(text: str, media_urls: List[str]) -> str:
+def post_tweet_v2(text: str, reply_to_id: Optional[str] = None) -> str:
     """
-    Uses Twitter v2 API via Tweepy Client.create_tweet.
-    Note: Media upload still requires v1.1 API if needed.
+    Post tweet using X API v2 directly with OAuth1.
+    Supports up to 25,000 characters for Premium accounts.
+    
+    Args:
+        text: Tweet content (up to 25k chars)
+        reply_to_id: Optional tweet ID to reply to (for threads)
+        
+    Returns:
+        Tweet ID of posted tweet
     """
-    response = twitter.create_tweet(text=text)
-    return str(response.data['id'])
+    url = "https://api.twitter.com/2/tweets"
+    
+    payload = {"text": text}
+    if reply_to_id:
+        payload["reply"] = {"in_reply_to_tweet_id": reply_to_id}
+    
+    response = requests.post(
+        url,
+        auth=oauth,
+        json=payload,
+        headers={"Content-Type": "application/json"}
+    )
+    
+    if response.status_code in [200, 201]:
+        data = response.json()
+        tweet_id = data["data"]["id"]
+        logger.info(f"Posted tweet {tweet_id} ({len(text)} chars)")
+        return tweet_id
+    else:
+        error_msg = f"X API error {response.status_code}: {response.text}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
 
 def run():
     if not all([NOTION_TOKEN, NOTION_DB_ID, API_KEY, API_KEY_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET]):
@@ -135,16 +164,16 @@ def run():
                 update_failure(page_id, "Empty Tweet Content")
                 continue
 
+            # Log content length for verification
+            logger.info(f"Preparing to post content: {len(text)} characters")
+            if len(text) < 500:
+                logger.warning(f"⚠️ Content is suspiciously short ({len(text)} chars) - expected 2000-5000 chars for long-form")
+            elif len(text) >= 2000:
+                logger.info(f"✅ Long-form content detected ({len(text)} chars)")
+
             try:
-                # Basic: single text tweet. If thread position > 1, reply.
-                if reply_to_id:
-                    response = twitter.create_tweet(
-                        text=text, 
-                        in_reply_to_tweet_id=reply_to_id
-                    )
-                    tweet_id = str(response.data['id'])
-                else:
-                    tweet_id = post_single_tweet(text, media_urls)
+                # Post content as-is (already enriched by fetch script)
+                tweet_id = post_tweet_v2(text, reply_to_id)
 
                 update_success(page_id, tweet_id)
                 reply_to_id = tweet_id
@@ -152,19 +181,15 @@ def run():
 
                 # polite pacing to avoid hitting minor limits
                 time.sleep(2)
-            except tweepy.errors.Forbidden as e:
-                error_msg = str(e)
-                if "duplicate content" in error_msg.lower():
-                    logger.warning(f"Duplicate content detected for page {page_id[:8]}... - marking as Failed")
-                else:
-                    logger.error(f"Twitter API forbidden error: {error_msg}")
-                update_failure(page_id, error_msg)
-            except tweepy.errors.TweepyException as e:
-                logger.error(f"Twitter API error: {e}")
-                update_failure(page_id, str(e))
             except Exception as e:
-                logger.exception("Unexpected error during posting")
-                update_failure(page_id, str(e))
+                error_msg = str(e)
+                logger.exception("Error during posting")
+                
+                # Check for duplicate content
+                if "duplicate" in error_msg.lower():
+                    logger.warning(f"Duplicate content detected for page {page_id[:8]}...")
+                
+                update_failure(page_id, error_msg[:1800])
 
 if __name__ == "__main__":
     run()

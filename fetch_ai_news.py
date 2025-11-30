@@ -458,6 +458,95 @@ def summarize_item(item: NewsItem) -> str:
     return summarize_fallback(item)
 
 
+def generate_long_form(short_summary: str) -> str:
+    """Transform short summary into premium long-form post using OpenAI.
+    
+    Args:
+        short_summary: Short summary text to expand
+        
+    Returns:
+        Long-form premium post (2,000-5,000 chars target, max 25,000)
+        Falls back to short_summary if OpenAI unavailable or fails
+    """
+    if not OPENAI_AVAILABLE:
+        logger.error("❌ CRITICAL: OpenAI library not available (import failed)")
+        logger.error("Install with: pip install openai")
+        logger.error("Falling back to SHORT summary")
+        return short_summary
+    
+    if not OPENAI_API_KEY:
+        logger.error("❌ CRITICAL: OPENAI_API_KEY environment variable not set")
+        logger.error("Long-form generation DISABLED - posts will be SHORT")
+        logger.error("Set OPENAI_API_KEY in GitHub Secrets")
+        return short_summary
+    
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        system_prompt = """You are an expert AI content writer specializing in creating engaging, educational long-form posts about artificial intelligence and technology.
+
+Your task: Transform short content into premium long-form posts (up to 25,000 characters) for X/Twitter Premium.
+
+Style guidelines:
+- Write in a clear, engaging, and educational tone for a general tech-savvy audience
+- Use proper structure: headings (##), bullet points, short paragraphs
+- Focus on insights, implications, and educational value
+- Include relevant context and background
+- Be conversational yet professional
+- Break down complex concepts into digestible sections
+- Add practical takeaways where relevant
+
+Format:
+- Start with a compelling hook or summary
+- Use markdown formatting (##, -, *, etc.)
+- Keep paragraphs short (2-4 sentences)
+- Use bullet points for lists and key points
+- End with a thought-provoking conclusion or call-to-action
+
+Maximum length: 25,000 characters
+Target: 2,000-5,000 characters for most posts (go longer if content warrants it)"""
+
+        user_prompt = f"""Transform this content into a premium long-form post:
+
+{short_summary}
+
+Create an engaging, educational post that expands on this topic while maintaining the core message."""
+
+        logger.info(f"🤖 Calling OpenAI {OPENAI_MODEL} to generate long-form content...")
+        logger.info(f"Input: {len(short_summary)} chars → Target: 2,000-5,000 chars")
+        
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=8000
+        )
+        
+        enriched = response.choices[0].message.content.strip()
+        
+        # Ensure we don't exceed X's 25k limit
+        if len(enriched) > 25000:
+            logger.warning(f"Long-form content too long ({len(enriched)} chars). Truncating to 25k.")
+            enriched = enriched[:24900] + "..."
+        
+        logger.info(f"✅ SUCCESS: Generated long-form content: {len(short_summary)} → {len(enriched)} chars")
+        
+        if len(enriched) < 500:
+            logger.error(f"⚠️ WARNING: Long-form is suspiciously short ({len(enriched)} chars)")
+            logger.error("OpenAI may not have understood the prompt correctly")
+        
+        return enriched
+        
+    except Exception as e:
+        logger.error(f"❌ CRITICAL: Long-form generation failed: {e}")
+        logger.error(f"Falling back to short summary ({len(short_summary)} chars)")
+        logger.error("This means the post will be SHORT, not long-form!")
+        return short_summary
+
+
 # ----- Notion Integration -----
 def notion_client() -> Client:
     """Create a Notion client instance."""
@@ -499,27 +588,28 @@ def write_skipped_row():
         logger.error("Failed to write Skipped row: %s", e)
 
 
-def create_notion_entry(summary: str, item: NewsItem, dry_run: bool = False) -> bool:
-    """Create a Notion database entry with Status=Scheduled."""
-    if dry_run:
-        logger.info("DRY RUN: Skipping Notion entry creation")
-        return True
+def create_notion_entry(long_form_content: str, item: NewsItem) -> bool:
+    """Create a Notion database entry with Status=Scheduled.
     
+    Saves pre-generated long-form content to Notion.
+    """
     if not NOTION_TOKEN or not NOTION_DB_ID:
         raise RuntimeError("NOTION_TOKEN and NOTION_DB_ID must be set")
     
     scheduled_time = datetime.now(timezone.utc) - timedelta(minutes=5)
     
+    logger.info(f"Saving to Notion: {len(long_form_content)} character long-form post")
+    
     try:
         notion = notion_client()
         notion_create_row(
             notion, NOTION_DB_ID,
-            tweet=summary,
+            tweet=long_form_content,  # Save long-form version
             scheduled_time=scheduled_time,
             media_url=item.image_url,
             status="Scheduled",
         )
-        logger.info(f"Created Notion entry for: {item.title[:50]}...")
+        logger.info(f"✅ Successfully saved long-form content ({len(long_form_content)} chars) to Notion for: {item.title[:50]}...")
         return True
     except Exception as e:
         logger.error(f"Failed to create Notion entry: {e}")
@@ -588,23 +678,34 @@ def main():
         
         # 4. Summarize
         summary = summarize_item(top_item)
-        logger.info(f"Generated summary ({len(summary)} chars): {summary}")
+        logger.info(f"Generated short summary ({len(summary)} chars): {summary}")
         
-        # 5. Dry-run output
+        # 5. Generate long-form content (always, even in dry-run)
+        logger.info("=" * 60)
+        logger.info("STEP 5: GENERATING LONG-FORM CONTENT")
+        logger.info("=" * 60)
+        long_form_content = generate_long_form(summary)
+        logger.info("=" * 60)
+        logger.info(f"LONG-FORM READY: {len(long_form_content)} characters")
+        logger.info("=" * 60)
+        
+        # 6. Dry-run output
         if args.dry_run:
             print(json.dumps({
-                "summary": summary,
+                "short_summary": summary,
+                "long_form_content": long_form_content,
+                "long_form_length": len(long_form_content),
                 "title": top_item.title,
                 "link": top_item.link,
                 "published": top_item.published.isoformat() if top_item.published else None,
                 "image_url": top_item.image_url,
                 "domain": top_item.source_domain,
-                "note": "dry-run: Notion write skipped"
+                "note": "dry-run: Notion write skipped (long-form content generated above)"
             }, ensure_ascii=False, indent=2))
             return 0
         
-        # 6. Create Notion entry
-        success = create_notion_entry(summary, top_item, dry_run=args.dry_run)
+        # 7. Create Notion entry with long-form content
+        success = create_notion_entry(long_form_content, top_item)
         
         if success:
             logger.info("=== AI Content Fetcher Completed Successfully ===")
