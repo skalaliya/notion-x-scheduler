@@ -39,7 +39,7 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 RSS_FEEDS = [
     "https://openai.com/blog/rss.xml",
     "https://blog.google/technology/ai/rss/",  # Google AI Blog
-    "https://www.deepmind.com/blog/rss.xml",  # DeepMind
+    # Note: DeepMind removed RSS support when moving to deepmind.google domain
     "https://developer.nvidia.com/blog/feed/",
     "https://aws.amazon.com/blogs/machine-learning/feed/",  # AWS ML Blog
     "https://techcrunch.com/tag/artificial-intelligence/feed/",
