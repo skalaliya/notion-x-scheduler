@@ -157,11 +157,18 @@ def run():
         reply_to_id = None
         for page in items:
             page_id = page["id"]
-            text = get_prop_text(page, "Tweet Content").strip()
+            
+            # Try to get long-form content first, fallback to Tweet Content
+            text = get_prop_text(page, "Long Form Draft").strip()
+            if not text:
+                # Fallback to Tweet Content if Long Form Draft is empty
+                text = get_prop_text(page, "Tweet Content").strip()
+                logger.info("Long Form Draft empty, using Tweet Content as fallback")
+            
             media_urls = get_media_urls(page)
 
             if not text:
-                update_failure(page_id, "Empty Tweet Content")
+                update_failure(page_id, "Empty content (both Long Form Draft and Tweet Content)")
                 continue
 
             # Log content length for verification
