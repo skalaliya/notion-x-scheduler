@@ -612,10 +612,10 @@ def create_notion_entry(long_form_content: str, item: NewsItem) -> bool:
     
     # Generate short title from item title (max 200 chars for Tweet Content field)
     title_content = item.title[:200] if len(item.title) <= 200 else f"{item.title[:197]}..."
-    
+
     logger.info(f"Saving to Notion: {len(long_form_content)} character long-form post")
     logger.info(f"  Title: {title_content}")
-    
+
     try:
         notion = notion_client()
         notion_create_row(
@@ -626,6 +626,8 @@ def create_notion_entry(long_form_content: str, item: NewsItem) -> bool:
             media_url=item.image_url,
             status="Scheduled",
         )
+
+
         logger.info(f"✅ Successfully saved long-form content ({len(long_form_content)} chars) to Notion")
         logger.info(f"   - Tweet Content (title): {len(title_content)} chars")
         logger.info(f"   - Long Form Draft: {len(long_form_content)} chars")
