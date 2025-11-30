@@ -1,10 +1,11 @@
 name: X Poster
 
 on:
-  # Run once daily, ~5 minutes after fetcher (allows time for Notion write)
+  # Run 5 minutes after fetcher (allows time for Notion write)
+  # Sydney time: 9:05am
   schedule:
-    - cron: "10 8 * 3-10 *"     # 08:10 UTC ≈ 10:10 Paris during CEST (Mar–Oct)
-    - cron: "10 9 * 11,12,1,2 *" # 09:10 UTC ≈ 10:10 Paris during CET (Nov–Feb)
+    - cron: "5 22 * 10-12,1-3 *"  # 22:05 UTC = 9:05am AEDT (Sydney summer, Oct-Mar)
+    - cron: "5 23 * 4-9 *"         # 23:05 UTC = 9:05am AEST (Sydney winter, Apr-Sep)
   workflow_run:
     workflows: ["AI Content Fetcher"]  # run right after fetcher
     types: [completed]

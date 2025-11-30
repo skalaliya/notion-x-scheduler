@@ -1,11 +1,11 @@
 name: AI Content Fetcher
 
 on:
-  # Europe/Paris ≈ UTC+2 (Mar–Oct) and UTC+1 (Nov–Feb).
-  # Run at ~10:05 Paris local using two UTC crons.
+  # Sydney/Australia timezone: AEDT (UTC+11) Oct-Apr, AEST (UTC+10) Apr-Oct
+  # Run at 9:00am Sydney time
   schedule:
-    - cron: "5 8 * 3-10 *"  # 08:05 UTC ≈ 10:05 Paris during CEST (Mar–Oct)
-    - cron: "5 9 * 11,12,1,2 *"  # 09:05 UTC ≈ 10:05 Paris during CET (Nov–Feb)
+    - cron: "0 22 * 10-12,1-3 *"  # 22:00 UTC = 9:00am AEDT (Sydney summer, Oct-Mar)
+    - cron: "0 23 * 4-9 *"         # 23:00 UTC = 9:00am AEST (Sydney winter, Apr-Sep)
   workflow_dispatch:
     inputs:
       dry_run:
