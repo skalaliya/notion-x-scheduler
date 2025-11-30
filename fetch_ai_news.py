@@ -560,21 +560,11 @@ def notion_create_row(notion: Client, db_id: str, *, title: str,
                       media_url: Optional[str] = None,
                       status: str = "Scheduled", error: Optional[str] = None):
     """Create a row in the Notion database."""
-title_content = item.title[:200] if len(item.title) <= 200 else f"{item.title[:197]}..."
-
     properties = {
-        "Tweet Content": {
-            "title": [{"type": "text", "text": {"content": title_content}}]
-        },
-        "Long Form Draft": {
-            "rich_text": [{"type": "text", "text": {"content": long_form_content}}]
-        },
-        "Scheduled Time": {
-            "date": {"start": scheduled_time.replace(microsecond=0).isoformat().replace('+00:00', 'Z')}
-        },
-        "Status": {"select": {"name": "Scheduled"}},
+        "Tweet Content": {"title": [{"type": "text", "text": {"content": title}}]},
+        "Scheduled Time": {"date": {"start": scheduled_time.replace(microsecond=0).isoformat().replace('+00:00', 'Z')}},
+        "Status": {"select": {"name": status}},
     }
-
     if long_form_content:
         properties["Long Form Draft"] = {"rich_text": [{"type": "text", "text": {"content": long_form_content}}]}
     if media_url:
