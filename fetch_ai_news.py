@@ -37,13 +37,22 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 RSS_FEEDS = [
-    "https://openai.com/blog/rss.xml",
+    # Major AI Labs & Companies
+    "https://openai.com/blog/rss.xml",  # OpenAI
     "https://blog.google/technology/ai/rss/",  # Google AI Blog
-    # Note: DeepMind removed RSS support when moving to deepmind.google domain
-    "https://developer.nvidia.com/blog/feed/",
+    "https://blog.research.google/feeds/posts/default",  # Google Research (replaces DeepMind)
+    "https://www.microsoft.com/en-us/research/feed/",  # Microsoft Research
+    "https://blogs.microsoft.com/ai/feed/",  # Microsoft AI Blog
+    "https://huggingface.co/blog/feed.xml",  # Hugging Face
+    "https://stability.ai/news?format=rss",  # Stability AI
+    
+    # Hardware & Cloud AI
+    "https://developer.nvidia.com/blog/feed/",  # NVIDIA
     "https://aws.amazon.com/blogs/machine-learning/feed/",  # AWS ML Blog
-    "https://techcrunch.com/tag/artificial-intelligence/feed/",
-    "https://venturebeat.com/category/ai/feed/",
+    
+    # Tech News & Analysis
+    "https://techcrunch.com/tag/artificial-intelligence/feed/",  # TechCrunch AI
+    "https://venturebeat.com/category/ai/feed/",  # VentureBeat AI
 ]
 
 BOOST_KEYWORDS = [
