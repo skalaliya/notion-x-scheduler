@@ -555,15 +555,18 @@ def notion_client() -> Client:
     return Client(auth=NOTION_TOKEN)
 
 
-def notion_create_row(notion: Client, db_id: str, *, tweet: str,
-                      scheduled_time: datetime, media_url: Optional[str] = None,
+def notion_create_row(notion: Client, db_id: str, *, title: str,
+                      scheduled_time: datetime, long_form_content: Optional[str] = None,
+                      media_url: Optional[str] = None,
                       status: str = "Scheduled", error: Optional[str] = None):
     """Create a row in the Notion database."""
     properties = {
-        "Tweet Content": {"title": [{"type": "text", "text": {"content": tweet}}]},
+        "Tweet Content": {"title": [{"type": "text", "text": {"content": title}}]},
         "Scheduled Time": {"date": {"start": scheduled_time.replace(microsecond=0).isoformat().replace('+00:00', 'Z')}},
         "Status": {"select": {"name": status}},
     }
+    if long_form_content:
+        properties["Long Form Draft"] = {"rich_text": [{"type": "text", "text": {"content": long_form_content}}]}
     if media_url:
         properties["Media URLs"] = {"rich_text": [{"type": "text", "text": {"content": media_url}}]}
     if error:
@@ -579,7 +582,7 @@ def write_skipped_row():
         db_id = os.environ["NOTION_DB_ID"]
         notion_create_row(
             notion, db_id,
-            tweet="(No fresh AI news today.) (system)",
+            title="(No fresh AI news today.) (system)",
             scheduled_time=datetime.now(timezone.utc) - timedelta(minutes=5),
             status="Skipped",
         )
@@ -598,18 +601,25 @@ def create_notion_entry(long_form_content: str, item: NewsItem) -> bool:
     
     scheduled_time = datetime.now(timezone.utc) - timedelta(minutes=5)
     
+    # Generate short title from item title (max 200 chars for Tweet Content field)
+    title_content = item.title[:200] if len(item.title) <= 200 else f"{item.title[:197]}..."
+    
     logger.info(f"Saving to Notion: {len(long_form_content)} character long-form post")
+    logger.info(f"  Title: {title_content}")
     
     try:
         notion = notion_client()
         notion_create_row(
             notion, NOTION_DB_ID,
-            tweet=long_form_content,  # Save long-form version
+            title=title_content,  # Short title for table view
+            long_form_content=long_form_content,  # Full content in Long Form Draft
             scheduled_time=scheduled_time,
             media_url=item.image_url,
             status="Scheduled",
         )
-        logger.info(f"✅ Successfully saved long-form content ({len(long_form_content)} chars) to Notion for: {item.title[:50]}...")
+        logger.info(f"✅ Successfully saved long-form content ({len(long_form_content)} chars) to Notion")
+        logger.info(f"   - Tweet Content (title): {len(title_content)} chars")
+        logger.info(f"   - Long Form Draft: {len(long_form_content)} chars")
         return True
     except Exception as e:
         logger.error(f"Failed to create Notion entry: {e}")
@@ -618,7 +628,7 @@ def create_notion_entry(long_form_content: str, item: NewsItem) -> bool:
             notion = notion_client()
             notion_create_row(
                 notion, NOTION_DB_ID,
-                tweet=f"[ERROR] Failed to create entry for: {item.title[:100]}",
+                title=f"[ERROR] Failed to create entry for: {item.title[:100]}",
                 scheduled_time=scheduled_time,
                 status="Failed",
                 error=str(e),
@@ -721,16 +731,12 @@ def main():
             try:
                 notion = Client(auth=NOTION_TOKEN)
                 scheduled_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-                notion.pages.create(
-                    parent={"database_id": NOTION_DB_ID},
-                    properties={
-                        "Tweet Content": {
-                            "title": [{"text": {"content": "[ERROR] AI Content Fetcher failed"}}]
-                        },
-                        "Status": {"select": {"name": "Failed"}},
-                        "Error Message": {"rich_text": [{"text": {"content": str(e)[:1800]}}]},
-                        "Scheduled Time": {"date": {"start": scheduled_iso}}
-                    }
+                notion_create_row(
+                    notion, NOTION_DB_ID,
+                    title="[ERROR] AI Content Fetcher failed",
+                    scheduled_time=datetime.now(timezone.utc),
+                    status="Failed",
+                    error=str(e)
                 )
             except:
                 pass
