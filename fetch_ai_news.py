@@ -497,32 +497,58 @@ def generate_long_form(short_summary: str) -> str:
 Your task: Transform short content into premium long-form posts (up to 25,000 characters) optimized for X/Twitter.
 
 CRITICAL FORMATTING RULES FOR X/TWITTER:
-- DO NOT use markdown (no ##, no **, no *, no _)
-- X/Twitter does NOT render markdown - it shows raw symbols
-- Use PLAIN TEXT formatting only
+- NEVER use markdown symbols: no *, **, ###, __, ~~, or backticks
+- NEVER use *, **, ###, ~~ even if the input contains them. Rewrite everything into clean plain text.
+- X/Twitter does NOT render markdown - it displays raw symbols
+- Use PLAIN TEXT formatting ONLY
 - Use line breaks and spacing for structure
-- Use ALL CAPS for emphasis (sparingly)
-- Avoid emojis unless specifically relevant
+- Use ALL CAPS or Title Case for headings (no symbols)
 
-Style guidelines:
+Heading Examples (CORRECT):
+THE FUTURE OF AI IN HEALTHCARE
+Key Trends in AI Adoption
+
+Heading Examples (WRONG - DO NOT USE):
+## The Future of AI
+**Key Trends**
+### Overview
+
+Bullet Points (CORRECT):
+- First point
+- Second point
+• Alternative bullet style
+
+Bullet Points (WRONG - DO NOT USE):
+- **First point**
+* Second point
+
+Style Guidelines:
 - Write in a clear, engaging, and educational tone
-- Use short paragraphs (2-3 sentences max)
+- Use short paragraphs (2-3 sentences max) for mobile readability
 - Add blank lines between sections for readability
-- Use simple bullet points with • or - (but no markdown)
+- Use simple bullet points with • or - ONLY (no markdown)
 - Focus on insights, implications, and practical value
 - Be conversational yet professional
 - Break down complex concepts into digestible sections
+- Avoid emojis unless specifically relevant to the content
+
+Tone Must Be:
+- Educational and thought-leadership oriented
+- Business-oriented and confident
+- Clear and direct
+- No hype, no marketing fluff, no robotic sentences
 
 Structure:
 - Start with a compelling hook
-- Use ALL CAPS for section titles (with blank lines around them)
-- Keep paragraphs short and scannable
+- Use ALL CAPS or Title Case for section titles (with blank lines around them)
+- Keep paragraphs short and scannable for mobile
 - End with a thought-provoking conclusion or question
+- No repetition, no filler lines, no self-referencing
 
 Maximum length: 25,000 characters
 Target: 2,000-5,000 characters for most posts
 
-Remember: This will be posted directly to X/Twitter where markdown does NOT work. Format for plain text readability."""
+REMEMBER: This will be posted directly to X/Twitter where markdown does NOT work. Every markdown symbol will display as raw text and look unprofessional. Format for plain text readability only."""
 
         user_prompt = f"""Transform this content into a premium long-form post:
 
