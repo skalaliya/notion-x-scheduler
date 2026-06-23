@@ -49,4 +49,8 @@ jobs:
           ACCESS_TOKEN_SECRET: ${{ secrets.ACCESS_TOKEN_SECRET }}
           API_KEY: ${{ secrets.API_KEY }}
           API_KEY_SECRET: ${{ secrets.API_KEY_SECRET }}
+          TWITTER_BACKEND: ${{ vars.TWITTER_BACKEND }}
+          XQUIK_API_KEY: ${{ secrets.XQUIK_API_KEY }}
+          XQUIK_ACCOUNT: ${{ secrets.XQUIK_ACCOUNT }}
+          XQUIK_API_BASE: ${{ vars.XQUIK_API_BASE }}
         run: python main.py

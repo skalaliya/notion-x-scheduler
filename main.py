@@ -8,16 +8,22 @@ import requests
 from requests_oauthlib import OAuth1
 from notion_client import Client
 
+from xquik_poster import DEFAULT_XQUIK_API_BASE, post_xquik_tweet
+
 # ----- Config -----
 UTC_NOW = datetime.now(timezone.utc)
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DB_ID = os.getenv("NOTION_DB_ID")
 
+TWITTER_BACKEND = os.getenv("TWITTER_BACKEND", "x-api").strip().lower()
 API_KEY = os.getenv("API_KEY")
 API_KEY_SECRET = os.getenv("API_KEY_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
+XQUIK_API_KEY = os.getenv("XQUIK_API_KEY")
+XQUIK_ACCOUNT = os.getenv("XQUIK_ACCOUNT")
+XQUIK_API_BASE = (os.getenv("XQUIK_API_BASE") or DEFAULT_XQUIK_API_BASE).strip()
 
 # ----- Logging -----
 logging.basicConfig(
@@ -30,13 +36,16 @@ logger = logging.getLogger(__name__)
 # ----- Clients -----
 notion = Client(auth=NOTION_TOKEN)
 
-# OAuth1 for direct X API v2 calls (supports 25k char tweets)
-oauth = OAuth1(
-    API_KEY,
-    client_secret=API_KEY_SECRET,
-    resource_owner_key=ACCESS_TOKEN,
-    resource_owner_secret=ACCESS_TOKEN_SECRET
-)
+if TWITTER_BACKEND == "xquik":
+    oauth = None
+else:
+    # OAuth1 for direct X API v2 calls (supports 25k char tweets)
+    oauth = OAuth1(
+        API_KEY,
+        client_secret=API_KEY_SECRET,
+        resource_owner_key=ACCESS_TOKEN,
+        resource_owner_secret=ACCESS_TOKEN_SECRET
+    )
 
 # ----- Helpers -----
 def iso(dt_obj: datetime) -> str:
@@ -97,6 +106,12 @@ def update_failure(page_id: str, error_msg: str):
         },
     )
 
+def required_env_vars() -> List[Optional[str]]:
+    base_vars = [NOTION_TOKEN, NOTION_DB_ID]
+    if TWITTER_BACKEND == "xquik":
+        return base_vars + [XQUIK_API_KEY, XQUIK_ACCOUNT]
+    return base_vars + [API_KEY, API_KEY_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET]
+
 def post_tweet_v2(text: str, reply_to_id: Optional[str] = None) -> str:
     """
     Post tweet using X API v2 directly with OAuth1.
@@ -109,6 +124,15 @@ def post_tweet_v2(text: str, reply_to_id: Optional[str] = None) -> str:
     Returns:
         Tweet ID of posted tweet
     """
+    if TWITTER_BACKEND == "xquik":
+        return post_xquik_tweet(
+            api_key=XQUIK_API_KEY or "",
+            account=XQUIK_ACCOUNT or "",
+            text=text,
+            api_base=XQUIK_API_BASE,
+            reply_to_id=reply_to_id,
+        )
+
     url = "https://api.twitter.com/2/tweets"
     
     payload = {"text": text}
@@ -133,7 +157,10 @@ def post_tweet_v2(text: str, reply_to_id: Optional[str] = None) -> str:
         raise Exception(error_msg)
 
 def run():
-    if not all([NOTION_TOKEN, NOTION_DB_ID, API_KEY, API_KEY_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET]):
+    if TWITTER_BACKEND not in {"x-api", "twitter", "x", "xquik"}:
+        raise RuntimeError("TWITTER_BACKEND must be x-api or xquik")
+
+    if not all(required_env_vars()):
         raise RuntimeError("Missing one or more env vars / secrets")
 
     pages = notion_query_scheduled(NOTION_DB_ID)
